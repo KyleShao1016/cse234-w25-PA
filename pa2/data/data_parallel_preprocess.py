@@ -43,3 +43,9 @@ def split_data(
     """
 
     #TODO: Your code here
+    # split x_train into mp subsets
+    x_split = np.split(x_train, dp_size)
+    # split y_train into mp subsets
+    y_splkit = np.split(y_train, dp_size)
+    # return the corresponding subset
+    return x_split[rank // mp_size], y_splkit[rank // mp_size]

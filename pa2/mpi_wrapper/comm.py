@@ -74,6 +74,17 @@ class Communicator(object):
           - For the root process: (n-1) receives and (n-1) sends.
         """
         #TODO: Your code here
+        self.comm.Reduce(src_array, dest_array, op, root=0)
+        # broadcasting
+        if self.Get_rank() == 0:
+            # Process 0 sends the data to all other processes
+            for i in range(1, self.Get_size()):
+                self.comm.Send(dest_array, dest=i, tag=99)
+        else:
+            # All other processes receive the data
+            self.comm.Recv(dest_array, source=0, tag=99)
+
+
 
     def myAlltoall(self, src_array, dest_array):
         """
@@ -91,3 +102,42 @@ class Communicator(object):
         The total data transferred is updated for each pairwise exchange.
         """
         #TODO: Your code here
+
+        # # Sending source array to other processors
+        # for i in range(self.Get_size()):
+        #     if i != self.Get_rank():
+        #         self.comm.Send(src_array, dest=i, tag=99)
+
+        # tmp = np.empty_like(dest_array)
+
+        # for i in range(self.Get_size()):
+        #     if i == self.Get_rank():
+        #         dest_array[i] = src_array[i]
+        #     else:
+        #         self.comm.Recv(tmp, source=i, tag=99)
+        #         dest_array[i] = tmp[i]
+
+
+        nprocs = self.comm.Get_size()
+        rank = self.comm.Get_rank()
+
+        # Determine the size of each segment to be sent
+        seg_size = len(src_array) // nprocs
+
+
+        recv_chunk = np.empty(seg_size, dtype=src_array.dtype)  # Buffer for received data
+
+        for i in range(nprocs):
+            send_chunk = src_array[i * seg_size: (i + 1) * seg_size]  # Extract segment to send
+
+            if i == rank:
+                # Copy local data directly (no communication needed)
+                dest_array[i * seg_size: (i + 1) * seg_size] = send_chunk
+            else:
+                
+                # Perform Sendrecv to exchange data
+                self.comm.Sendrecv(send_chunk, dest=i, sendtag=99, 
+                                recvbuf=recv_chunk, source=i, recvtag=99)
+                
+                # Store received data
+                dest_array[i * seg_size: (i + 1) * seg_size] = recv_chunk

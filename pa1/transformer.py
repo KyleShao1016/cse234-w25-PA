@@ -36,6 +36,46 @@ def transformer(X: ad.Node, nodes: List[ad.Node],
 
     """TODO: Your code here"""
 
+    W_Q, W_K, W_V, W_O, W_1, W_2, b_1, b_2 = nodes
+
+    # Compute attention mechanism
+    Q = ad.matmul(X, W_Q)
+    K = ad.matmul(X, W_K)
+    V = ad.matmul(X, W_V)
+
+    attention_scores = ad.matmul(Q, ad.transpose(K, 1, 2)) / (model_dim ** 0.5)
+    attention_weights = ad.softmax(attention_scores, dim=-1)
+    attention_output = ad.matmul(attention_weights, V)
+
+    # Output projection
+    output_projected = ad.matmul(attention_output, W_O)
+
+    # LayerNorm 1 after attention
+    output_projected = ad.layernorm(output_projected, [model_dim], eps=eps)
+
+    # Feedforward network
+    hidden_layer = ad.relu(ad.matmul(output_projected, W_1) + ad.broadcast(
+        b_1, [batch_size, model_dim], [batch_size, seq_length, model_dim]
+    ))
+    # logits = ad.matmul(hidden_layer, W_2) + ad.broadcast(
+    #     b_2, [batch_size, num_classes], [batch_size, seq_length, num_classes]
+    # )
+
+    # hidden_layer = ad.add(ad.relu(ad.matmul(output_projected, W_1), ad.broadcast(
+    #     b_1, [batch_size, model_dim], [batch_size, seq_length, model_dim]
+    # ))
+    logits = ad.add(ad.matmul(hidden_layer, W_2), ad.broadcast(
+        b_2, [batch_size, num_classes], [batch_size, seq_length, num_classes]
+    ))
+
+    # LayerNorm 2 after feedforward
+    # logits = ad.layernorm(logits, [num_classes], eps=eps)
+
+    # Average over the sequence length for classification
+    averaged_output = ad.mean(logits, dim=(1))  # (batch_size, num_classes)
+
+    return averaged_output
+
 
 def softmax_loss(Z: ad.Node, y_one_hot: ad.Node, batch_size: int) -> ad.Node:
     """Construct the computational graph of average softmax loss over
@@ -69,6 +109,17 @@ def softmax_loss(Z: ad.Node, y_one_hot: ad.Node, batch_size: int) -> ad.Node:
     Try to think about why our softmax loss may need the batch size.
     """
     """TODO: Your code here"""
+    # Apply softmax to logits
+    probs = ad.softmax(Z, dim=(1))  # Assuming softmax returns probabilities
+
+    # Cross-entropy loss for each instance
+    loss_per_sample = ad.mul_by_const(ad.sum_op(ad.mul(y_one_hot, ad.log(probs)), dim=(1), keepdim=False), -1)
+
+    # Compute the average loss over the batch
+    avg_loss = ad.div_by_const(ad.sum_op(loss_per_sample, dim=(0), keepdim=False), batch_size)
+
+    return avg_loss
+
 
 
 
@@ -127,6 +178,7 @@ def sgd_epoch(
     total_loss = 0.0
 
     for i in range(num_batches):
+        # print(f'=============={i}===============')
         # Get the mini-batch data
         start_idx = i * batch_size
         if start_idx + batch_size> num_examples:continue
@@ -136,21 +188,28 @@ def sgd_epoch(
         
         # Compute forward and backward passes
         # TODO: Your code here
+        predict, loss, *grad = f_run_model(model_weights, X_batch, y_batch)
 
-        
+        # grad = ad.gradients(loss, grad)
         # Update weights and biases
         # TODO: Your code here
         # Hint: You can update the tensor using something like below:
         # W_Q -= lr * grad_W_Q.sum(dim=0)
+        for j in range(len(model_weights)):
+            # print(model_weights[j].shape, grad[j].sum(dim=0).shape)
+            model_weights[j] -= lr * grad[j].sum(dim=0)
+
+        # breakpoint()
 
         # Accumulate the loss
         # TODO: Your code here
+        total_loss += loss
 
 
     # Compute the average loss
     
     average_loss = total_loss / num_examples
-    print('Avg_loss:', average_loss)
+    # print('Avg_loss:', average_loss)
 
     # TODO: Your code here
     # You should return the list of parameters and the loss
@@ -179,16 +238,35 @@ def train_model():
     lr = 0.02
 
     # TODO: Define the forward graph.
+    # Input Variable
+    X = ad.Variable(name="X")
+    # Create weight and bias nodes for trainable parameters
+    W_Q = ad.Variable(name="W_Q")
+    W_K = ad.Variable(name="W_K")
+    W_V = ad.Variable(name="W_V")
+    W_O = ad.Variable(name="W_O")
+    W_1 = ad.Variable(name="W_1")
+    W_2 = ad.Variable(name="W_2")
+    b_1 = ad.Variable(name="b_1")
+    b_2 = ad.Variable(name="b_2")
 
-    y_predict: ad.Node = ... # TODO: The output of the forward pass
+    y_predict: ad.Node = transformer(
+    X=X,
+    nodes=[W_Q, W_K, W_V, W_O, W_1, W_2, b_1, b_2],
+    model_dim=model_dim,
+    seq_length=seq_length,
+    eps=eps,
+    batch_size=batch_size,
+    num_classes=num_classes
+    ) # TODO: The output of the forward pass
     y_groundtruth = ad.Variable(name="y")
     loss: ad.Node = softmax_loss(y_predict, y_groundtruth, batch_size)
     
     # TODO: Construct the backward graph.
-    
+    grads_for_variables = ad.gradients(loss, nodes=[W_Q, W_K, W_V, W_O, W_1, W_2, b_1, b_2])
 
     # TODO: Create the evaluator.
-    grads: List[ad.Node] = ... # TODO: Define the gradient nodes here
+    grads: List[ad.Node] = grads_for_variables # TODO: Define the gradient nodes here
     evaluator = ad.Evaluator([y_predict, loss, *grads])
     test_evaluator = ad.Evaluator([y_predict])
 
@@ -232,15 +310,23 @@ def train_model():
     b_1_val = np.random.uniform(-stdv, stdv, (model_dim,))
     b_2_val = np.random.uniform(-stdv, stdv, (num_classes,))
 
-    def f_run_model(model_weights):
+    def f_run_model(model_weights, X_batch, y_batch):
         """The function to compute the forward and backward graph.
         It returns the logits, loss, and gradients for model weights.
         """
         result = evaluator.run(
             input_values={
                 # TODO: Fill in the mapping from variable to tensor
-
-
+                X: X_batch,
+                y_groundtruth: y_batch, 
+                W_Q: model_weights[0],
+                W_K: model_weights[1],
+                W_V: model_weights[2],
+                W_O: model_weights[3],
+                W_1: model_weights[4],
+                W_2: model_weights[5],
+                b_1: model_weights[6],
+                b_2: model_weights[7]
             }
         )
         return result
@@ -259,8 +345,16 @@ def train_model():
             X_batch = X_val[start_idx:end_idx, :max_len]
             logits = test_evaluator.run({
                 # TODO: Fill in the mapping from variable to tensor
-
-
+                X: X_batch,
+                # y_groundtruth: y_train,
+                W_Q: model_weights[0],
+                W_K: model_weights[1],
+                W_V: model_weights[2],
+                W_O: model_weights[3],
+                W_1: model_weights[4],
+                W_2: model_weights[5],
+                b_1: model_weights[6],
+                b_2: model_weights[7]
             })
             all_logits.append(logits[0])
         # Concatenate all logits and return the predicted classes
@@ -270,7 +364,11 @@ def train_model():
 
     # Train the model.
     X_train, X_test, y_train, y_test= torch.tensor(X_train), torch.tensor(X_test), torch.DoubleTensor(y_train), torch.DoubleTensor(y_test)
-    model_weights: List[torch.Tensor] = [] # TODO: Initialize the model weights here
+    model_weights: List[torch.Tensor] = [
+                                        torch.tensor(W_Q_val), torch.tensor(W_K_val), torch.tensor(W_V_val), 
+                                        torch.tensor(W_O_val), torch.tensor(W_1_val), torch.tensor(W_2_val),
+                                        torch.tensor(b_1_val), torch.tensor(b_2_val)
+                                        ] # TODO: Initialize the model weights here
     for epoch in range(num_epochs):
         X_train, y_train = shuffle(X_train, y_train)
         model_weights, loss_val = sgd_epoch(

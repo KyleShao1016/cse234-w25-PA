@@ -1,0 +1,5 @@
+First, some of the forward performance of fused operator is slower than non-fused ones, I think the reason might be the result of cache.
+Owing to we test the fused operator first, some result might have been cached in the memory for non-fused operator to use, resulting in a slower performance.
+
+However, it is apparent that users can achieve much better performance when doing backward pass on fused operator because the intermediate results have been kept in registers or fast memory rather than reloading them from slower memory.
+For future improvement, I think we can create some compound operator when implementing gradient function which might have better performance rather than using the original operators defined in auto_diff.py.

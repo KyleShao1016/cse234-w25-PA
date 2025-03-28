@@ -1,0 +1,38 @@
+In the test of using "EleutherAI/pythia-1.4b-deduped" as target model and "EleutherAI/pythia-160m-deduped" as draft model,
+We achieved the following results.
+
+Benchmark the implementation against baseline decoding:
+Prompt1:
+Draft token acceptance rate: 84.13%
+Speedup: 1.46x
+
+Prompt2:
+Draft token acceptance rate: 89.57%
+Speedup: 1.61x
+
+Prompt3:
+Draft token acceptance rate: 83.78%
+Speedup: 1.85x
+
+
+Analyze the impact of different parameter settings on performance.
+1. num_speculative_tokens
+Impact: Determines how many tokens are predicted in advance by the draft model before verification by the target model.
+A higher setting can improve efficiency by generating more tokens at once but may result in a higher rejection rate. 
+A lower setting increases the likelihood of acceptance but reduces the overall speedup.
+
+2. Model Selection
+Impact: The closer the draft model aligns with the target model, the higher the token acceptance rate.
+Using a larger draft model with parameters similar to the target model can improve acceptance rates. 
+However, this reduces efficiency and diminishes the benefits of speculative decoding.
+
+
+Document all optimizations and their effects in your report.
+1. KV-Cache Utilization
+Effect: Reduces redundant computations, speeding up verification.
+
+2. Dynamically adjust num_speculative_tokens
+Effect: Dynamically adjusting num_speculative_tokens can enhance efficiency in speculative decoding by balancing computational overhead and speed. 
+Increasing num_speculative_tokens when acceptance is high improves throughput, reduces verification steps, and speeds up generation. 
+Decreasing num_speculative_tokens when acceptance is low prevents unnecessary computations and minimizes verification overhead. 
+However, our results show that the benefits of this optimization are not always significant.
